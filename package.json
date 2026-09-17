@@ -14,7 +14,7 @@
   },
   "//": "No dependencies: the shipped extension has zero runtime npm packages (see vendor/ + SBOM.md). devDependencies holds the one build/test tool, pinned to an exact version — this is its single source of truth, so GitHub's dependency graph and Dependabot can see it and .github/workflows/build.yml installs exactly this version.",
   "devDependencies": {
-    "playwright": "1.62.1"
+    "playwright": "1.63.0"
   },
   "scripts": {
     "pretest": "node scripts/verify-vendor.js",
