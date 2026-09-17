@@ -72,11 +72,12 @@
       label: 'jq',
       docsUrl: 'https://jqlang.org/manual/',
       docsHost: 'jqlang.org',
-      blurb: 'Queries use jq syntax (via the pure-JS jqts engine — core jq features, not every builtin). Manual at ',
+      blurb: 'Queries use jq syntax (real jq 1.8.2 running as WebAssembly — every builtin, regex included). Manual at ',
       placeholder: 'jq query — e.g. .value[].displayName (empty = whole response)',
       examples: [
         { query: '.value[].displayName', label: 'Pluck one field from every item' },
         { query: '.value | map(select(.jobTitle == "Auditor"))', label: 'Filter by value' },
+        { query: '[.value[] | select((.displayName // "") | test("^a"; "i"))]', label: 'Filter by regex' },
         { query: '[.value[] | {name: .displayName, email: .mail}]', label: 'Reshape objects' },
         { query: '.value | sort_by(.displayName) | .[].displayName', label: 'Sort' },
         { query: '.value | length', label: 'Count items' }
@@ -525,16 +526,27 @@
     return newestLiveResponse(list);
   }
 
+  // Local jq: real jq compiled to WebAssembly (vendor/jq-wasm.js), the
+  // same engine the evaluator frame runs. Queries normally run there;
+  // this instance exists for the fallback path (frame blocked, or a small
+  // dataset while it boots) and is only created the first time a jq
+  // query has to run on this thread — see runQuery.
+  var jqLocal = GEJQ.createJqEngine(typeof JQWASM !== 'undefined' ? JQWASM : null);
+
+  /** True while a local jq evaluation would have to wait for the engine. */
+  function localJqBooting() {
+    return state.settings.queryLanguage === 'jq' && state.query.trim() !== '' && !jqLocal.ready() && !jqLocal.failed();
+  }
+
   /** Evaluate `query` against `json` in the selected query language. */
   function executeQuery(json, query) {
     if (state.settings.queryLanguage === 'jsonpath') {
       return JSONPath.JSONPath({ path: query, json: json, wrap: true });
     }
     if (state.settings.queryLanguage === 'jq') {
-      var jq = JQTS.default || JQTS;
-      var outputs = jq.compile(query).evaluate(json);
-      // jq produces a stream of outputs; unwrap the common single-output case.
-      return outputs.length === 1 ? outputs[0] : outputs;
+      // jq produces a stream of outputs; the adapter unwraps the common
+      // single-output case and turns engine failures into plain errors.
+      return jqLocal.evaluate(json, query);
     }
     return jmespath.search(json, query);
   }
@@ -1032,6 +1044,16 @@
         key,
         false
       );
+      return;
+    }
+    if (localJqBooting()) {
+      // First jq run on this thread: create the WebAssembly instance
+      // (≈60 ms) and come back, like the booting-evaluator case above.
+      // A load failure leaves failed() set, so this branch is not taken
+      // again and executeQuery surfaces the reason as an error.
+      recordNext = record;
+      ui.metaRight.textContent = 'loading jq…';
+      jqLocal.load().then(scheduleRun, scheduleRun);
       return;
     }
     finishOutcome(currentResult(), response, key, record);
@@ -1852,7 +1874,7 @@
   // arrive once per page, and rebuilding the buttons on each one
   // destroyed them between mousedown and mouseup, so clicks on Pause
   // never landed while pages were streaming in.
-  var fetchStatusView = { state: null, text: null, pausePending: false };
+  var fetchStatusView = { state: null, text: null, bar: null, fill: null, percent: null, pausePending: false };
 
   /**
    * Auto-fetch progress on the meta row (same line as the result
@@ -1872,6 +1894,9 @@
       box.style.display = 'none';
       fetchStatusView.state = null;
       fetchStatusView.text = null;
+      fetchStatusView.bar = null;
+      fetchStatusView.fill = null;
+      fetchStatusView.percent = null;
       fetchStatusView.pausePending = false;
       return;
     }
@@ -1907,6 +1932,18 @@
           })
         );
       }
+      // Progress bar + whole-number percentage — only meaningful when the
+      // first page carried an @odata.count ($count=true on the request);
+      // updateFetchStatusText hides both otherwise.
+      fetchStatusView.bar = el('span', 'gejq-fetch-bar');
+      fetchStatusView.bar.setAttribute('role', 'progressbar');
+      fetchStatusView.bar.setAttribute('aria-valuemin', '0');
+      fetchStatusView.bar.setAttribute('aria-valuemax', '100');
+      fetchStatusView.fill = el('span', 'gejq-fetch-bar-fill');
+      fetchStatusView.bar.appendChild(fetchStatusView.fill);
+      box.appendChild(fetchStatusView.bar);
+      fetchStatusView.percent = el('span', 'gejq-fetch-pct', '');
+      box.appendChild(fetchStatusView.percent);
       fetchStatusView.text = el('span', 'gejq-fetch-text', '');
       box.appendChild(fetchStatusView.text);
       box.style.display = '';
@@ -1914,10 +1951,32 @@
     updateFetchStatusText();
   }
 
+  /** Bar + "NN%" from items fetched vs @odata.count (hidden without one). */
+  function updateFetchProgressBar() {
+    var view = fetchStatusView;
+    if (!view.bar || !fetchProgress) {
+      return;
+    }
+    var percent = GEJQ.fetchPercent(fetchProgress.items, fetchProgress.count);
+    if (percent === null) {
+      view.bar.style.display = 'none';
+      view.percent.style.display = 'none';
+      view.percent.textContent = '';
+      return;
+    }
+    view.bar.style.display = '';
+    view.percent.style.display = '';
+    view.fill.style.width = percent + '%';
+    view.percent.textContent = percent + '%';
+    view.bar.setAttribute('aria-valuenow', String(percent));
+    view.bar.title = fetchProgress.items + ' of ' + fetchProgress.count + ' items (@odata.count)';
+  }
+
   function updateFetchStatusText() {
     if (!fetchStatusView.text || !fetchProgress) {
       return;
     }
+    updateFetchProgressBar();
     var metrics =
       fetchProgress.pages + ' pages · ' + fetchProgress.items + ' items · ' + GEJQ.formatBytes(fetchProgress.size);
     if (fetchProgress.state === 'running') {

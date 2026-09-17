@@ -36,7 +36,10 @@
  * because this page only ever runs the three data-query engines over
  * JSON it was handed — no code evaluation, no privileged APIs, no
  * storage — and the panel only trusts replies whose event.source is
- * this exact frame.
+ * this exact frame. The jq engine is real jq compiled to WebAssembly
+ * (vendor/jq-wasm.js, bytes embedded): a fixed, checksummed binary that
+ * only ever sees JSON text and a filter — the manifest's
+ * 'wasm-unsafe-eval' exists for exactly this page.
  */
 (function () {
   'use strict';
@@ -53,6 +56,17 @@
   // One-slot result cache: re-sorting a table or exporting right after an
   // evaluation must not re-run the query.
   var lastEval = { key: null, value: undefined };
+
+  // jq: the WebAssembly instance is created asynchronously, so it starts
+  // loading the moment this page is up (≈60 ms) and jq requests that
+  // arrive earlier are parked on the load promise (see withEngine). The
+  // one-slot text cache saves re-serializing a dataset for every
+  // keystroke — jq takes JSON text, and typing a query re-runs it.
+  var jqEngine = GEJQ.createJqEngine(typeof JQWASM !== 'undefined' ? JQWASM : null);
+  jqEngine.load().catch(function () {
+    /* reported per request by evaluate() */
+  });
+  var jqText = { key: null, text: null };
 
   function storeDataset(id, json) {
     generationCounter += 1;
@@ -108,7 +122,7 @@
     announceDataset(id);
   }
 
-  function evaluate(language, json, query) {
+  function evaluate(language, json, query, textKey) {
     if (query === '') {
       return json;
     }
@@ -116,9 +130,10 @@
       return JSONPath.JSONPath({ path: query, json: json, wrap: true });
     }
     if (language === 'jq') {
-      var jq = JQTS.default || JQTS;
-      var outputs = jq.compile(query).evaluate(json);
-      return outputs.length === 1 ? outputs[0] : outputs;
+      if (jqText.key !== textKey) {
+        jqText = { key: textKey, text: JSON.stringify(json === undefined ? null : json) };
+      }
+      return jqEngine.evaluate(jqText.text, query);
     }
     return jmespath.search(json, query);
   }
@@ -132,7 +147,7 @@
     if (lastEval.key === key) {
       return lastEval.value;
     }
-    var value = evaluate(language, dataset.json, query.trim());
+    var value = evaluate(language, dataset.json, query.trim(), datasetId + '|' + dataset.gen);
     lastEval = { key: key, value: value };
     return value;
   }
@@ -242,6 +257,30 @@
     reply({ type: 'gejq-diff-result', requestId: data.requestId, ok: true, rows: rows });
   }
 
+  /**
+   * Run a query handler once the engine its language needs is up. Only
+   * jq loads asynchronously; everything else runs inline, so ordering
+   * for the other languages is exactly what it was. A failed load is not
+   * special-cased here: evaluate() then throws the load error, and the
+   * handler reports it like any other evaluation error.
+   */
+  function withEngine(data, reply, handler) {
+    if (data.language !== 'jq' || jqEngine.ready()) {
+      handler(data, reply);
+      return;
+    }
+    var run = function () {
+      try {
+        handler(data, reply);
+      } catch (e) {
+        if (typeof data.requestId === 'number') {
+          reply({ type: 'gejq-result', requestId: data.requestId, ok: false, error: errorText(e) });
+        }
+      }
+    };
+    jqEngine.load().then(run, run);
+  }
+
   window.addEventListener('message', function (event) {
     var data = event.data;
     if (!data || typeof data.type !== 'string' || !event.source) {
@@ -276,11 +315,11 @@
       } else if (data.type === 'gejq-chain-abort' && typeof data.id === 'string') {
         delete chains[data.id];
       } else if (data.type === 'gejq-evaluate') {
-        handleEvaluate(data, reply);
+        withEngine(data, reply, handleEvaluate);
       } else if (data.type === 'gejq-export') {
-        handleExport(data, reply);
+        withEngine(data, reply, handleExport);
       } else if (data.type === 'gejq-diff') {
-        handleDiff(data, reply);
+        withEngine(data, reply, handleDiff);
       }
     } catch (e) {
       if (typeof data.requestId === 'number') {

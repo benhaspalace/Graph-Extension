@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Graph Explorer JSON Query",
-  "version": "0.23.0",
-  "description": "Adds JMESPath JSON query capabilities to Microsoft Graph Explorer results: filter, reshape, and export the JSON returned by your Graph queries.",
+  "version": "0.24.0",
+  "description": "Adds JMESPath, JSONPath, and jq query capabilities to Microsoft Graph Explorer results: filter, reshape, and export the JSON returned by your Graph queries.",
   "homepage_url": "https://github.com/benhaspalace/Graph-Explorer-Browser-Extension",
   "minimum_chrome_version": "111",
   "icons": {
@@ -23,7 +23,7 @@
   },
   "permissions": ["storage"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'none'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; base-uri 'none'"
   },
   "background": {
     "service_worker": "src/background.js"
@@ -53,7 +53,7 @@
     {
       "matches": ["https://developer.microsoft.com/*"],
       "include_globs": ["*graph-explorer*"],
-      "js": ["vendor/jmespath.js", "vendor/jsonpath-plus.js", "vendor/jqts.js", "vendor/codemirror.js", "src/query-utils.js", "src/content.js"],
+      "js": ["vendor/jmespath.js", "vendor/jsonpath-plus.js", "vendor/jq-wasm.js", "vendor/codemirror.js", "src/query-utils.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],

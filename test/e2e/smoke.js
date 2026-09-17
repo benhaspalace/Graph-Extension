@@ -209,7 +209,10 @@ function check(name, ok, extra) {
         }
         body = { value: bigItems };
       } else if (url.includes('pagedslow=1')) {
+        // Carries an @odata.count (as a `$count=true` request would), so
+        // this chain drives the progress bar: 3 of 9 items after page 1.
         body = Object.assign({}, SAMPLE_RESPONSE, {
+          '@odata.count': 9,
           '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?pagedslow=2'
         });
       } else if (url.includes('pagedslow=2')) {
@@ -899,6 +902,25 @@ function check(name, ok, extra) {
     runningControls.buttons.join('') === '⏸' && runningControls.links === 0,
     JSON.stringify(runningControls)
   );
+  // The first page announced @odata.count = 9 and holds 3 items, and the
+  // second page is still in flight (1500 ms): the bar must read 33 %,
+  // a whole number, with the fill at the same width.
+  const runningPercent = await page.evaluate(() => {
+    const shadow = document.getElementById('gejq-host').shadowRoot;
+    const bar = shadow.querySelector('.gejq-fetch-status .gejq-fetch-bar');
+    const pct = shadow.querySelector('.gejq-fetch-status .gejq-fetch-pct');
+    return {
+      pct: pct ? pct.textContent : null,
+      barShown: !!bar && bar.style.display !== 'none',
+      fill: bar ? bar.firstChild.style.width : null,
+      now: bar ? bar.getAttribute('aria-valuenow') : null
+    };
+  });
+  check(
+    'progress bar + whole-number percentage from @odata.count (3 of 9 items → 33%)',
+    runningPercent.pct === '33%' && runningPercent.barShown && runningPercent.fill === '33%' && runningPercent.now === '33',
+    JSON.stringify(runningPercent)
+  );
   // While pages are in flight the query editor is grayed out and the
   // result view does not refresh — evaluating against the continuously
   // growing dataset is what froze the panel (regression). Pausing the
@@ -1067,6 +1089,15 @@ function check(name, ok, extra) {
   }
   const pausedStatus = await fetchStatusText();
   check('paused status names the page limit', /page limit/i.test(pausedStatus), pausedStatus.slice(0, 90));
+  check(
+    'no progress bar or percentage when the response has no @odata.count',
+    await page.evaluate(() => {
+      const shadow = document.getElementById('gejq-host').shadowRoot;
+      const bar = shadow.querySelector('.gejq-fetch-status .gejq-fetch-bar');
+      const pct = shadow.querySelector('.gejq-fetch-status .gejq-fetch-pct');
+      return !!bar && bar.style.display === 'none' && !!pct && pct.style.display === 'none' && !/\d+%/.test(shadow.querySelector('.gejq-fetch-status').textContent);
+    })
+  );
   const pausedOptions = await page.evaluate(() =>
     Array.from(document.getElementById('gejq-host').shadowRoot.querySelectorAll('.gejq-history-select option')).map(
       (o) => o.textContent
@@ -1382,6 +1413,18 @@ function check(name, ok, extra) {
   await query.fill('.value[].displayName');
   await page.waitForTimeout(400);
   check('jq iteration query works', (await page.locator('.gejq-result').innerText()).includes('Lidia Holloway'));
+  // Regex builtins only exist because jq is the real thing (WebAssembly)
+  // — and it runs inside the extension's CSP ('wasm-unsafe-eval').
+  await query.fill('.value | map(select(.displayName | test("^L"))) | length');
+  await page.waitForTimeout(600);
+  check('jq regex builtin (test) works in the WebAssembly engine', (await page.locator('.gejq-result').innerText()).trim() === '2', (await page.locator('.gejq-result').innerText()).trim().slice(0, 80));
+  await query.fill('.value[0].displayName | capture("(?<first>\\\\w+) (?<last>\\\\w+)") | .last');
+  await page.waitForTimeout(600);
+  check('jq capture builtin works', (await page.locator('.gejq-result').innerText()).includes('"Vance"'), (await page.locator('.gejq-result').innerText()).trim().slice(0, 80));
+  await query.fill('.value | nope');
+  await page.waitForTimeout(600);
+  const jqError = (await page.locator('.gejq-panel .gejq-error').first().innerText()).trim();
+  check('jq compile error is shown tidily (no jq: prefix, no tally line)', jqError.startsWith('jq: nope/0 is not defined') && !/compile error/.test(jqError), jqError.slice(0, 120));
 
   // 10f2. Tier-2 autocomplete: property names from the selected response.
   await query.fill('.value[].ma');
