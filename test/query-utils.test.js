@@ -1,25 +1,32 @@
 'use strict';
 
 const test = require('node:test');
+const { before } = require('node:test');
 const assert = require('node:assert/strict');
 
 const GEJQ = require('../src/query-utils.js');
 const jmespath = require('../vendor/jmespath.js');
 const { JSONPath } = require('../vendor/jsonpath-plus.js');
 
-// vendor/jqts.js is an IIFE browser bundle exposing a JQTS global.
+// vendor/jq-wasm.js is an IIFE browser bundle exposing a JQWASM global
+// (real jq 1.8.2 compiled to WebAssembly, bytes embedded). Evaluated in
+// this realm so it sees Node's WebAssembly/TextDecoder; loading the
+// instance is async, so it happens once in a `before` hook and the tests
+// below stay synchronous.
 const vm = require('node:vm');
-const jqtsContext = { self: {} };
-vm.createContext(jqtsContext);
-vm.runInContext(require('node:fs').readFileSync(__dirname + '/../vendor/jqts.js', 'utf8') + '; this.JQTS = JQTS;', jqtsContext);
-const jq = jqtsContext.JQTS.default || jqtsContext.JQTS;
+const JQWASM = vm.runInThisContext(
+  '(function () {' + require('node:fs').readFileSync(__dirname + '/../vendor/jq-wasm.js', 'utf8') + '\nreturn JQWASM; })()',
+  { filename: 'vendor/jq-wasm.js' }
+);
+const jqEngine = GEJQ.createJqEngine(JQWASM);
+let jqBuiltins = null; // Set of "name/arity" from the engine itself
+before(async () => {
+  await jqEngine.load();
+  jqBuiltins = new Set(jqEngine.evaluate(null, '[builtins[]]'));
+});
 
 function runJq(query, json) {
-  const outputs = jq.compile(query).evaluate(json);
-  const result = outputs.length === 1 ? outputs[0] : outputs;
-  // The vm context has its own Array/Object prototypes, which trips
-  // assert.deepStrictEqual — normalize through JSON.
-  return result === undefined ? undefined : JSON.parse(JSON.stringify(result));
+  return jqEngine.evaluate(json, query);
 }
 
 const SAMPLE_USERS_RESPONSE = {
@@ -285,6 +292,7 @@ test('the documented jq examples run on the sample response', () => {
   const examples = [
     '.value[].displayName',
     '.value | map(select(.jobTitle == "Auditor"))',
+    '[.value[] | select((.displayName // "") | test("^a"; "i"))]',
     '[.value[] | {name: .displayName, email: .mail}]',
     '.value | sort_by(.displayName) | .[].displayName',
     '.value | length'
@@ -522,18 +530,173 @@ test('every JMESPath completion is a real jmespath.js function', () => {
   assert.ok(count >= 26, `expected the full function list, saw ${count}`);
 });
 
-test('every jq completion compiles in the bundled jqts engine', () => {
+test('every jq completion names a builtin of the bundled jq engine, in the right form', () => {
+  // The engine's own `builtins` list is the authority: a bare completion
+  // must exist with arity 0, a `name(` completion with some arity ≥ 1.
+  const arities = new Map();
+  for (const entry of jqBuiltins) {
+    const [name, arity] = entry.split('/');
+    if (!arities.has(name)) arities.set(name, new Set());
+    arities.get(name).add(Number(arity));
+  }
   const seen = new Set();
-  for (const letter of 'abcdefghijklmnopqrstuvwxyz') {
+  for (const letter of 'abcdefghijklmnopqrstuvwxyzI') {
     const result = GEJQ.queryCompletions('jq', letter);
     for (const item of (result && result.items) || []) {
       if (seen.has(item.label)) continue;
       seen.add(item.label);
-      const probe = item.insert.endsWith('(') ? item.insert + '.)' : item.insert;
-      assert.doesNotThrow(() => jq.compile(probe), `jq builtin ${item.label} must compile (${probe})`);
+      const name = item.label.replace(/\($/, '');
+      assert.ok(arities.has(name), `jq completion ${item.label} is not a builtin of jq ${jqEngine.version()}`);
+      if (item.insert.endsWith('(')) {
+        assert.ok([...arities.get(name)].some((n) => n >= 1), `${name}( must take arguments`);
+      } else {
+        assert.ok(arities.get(name).has(0), `${name} must exist bare (arity 0)`);
+      }
     }
   }
-  assert.ok(seen.size >= 30, `expected a substantial jq list, got ${seen.size}`);
+  assert.ok(seen.size >= 100, `expected the jq 1.8 builtin list, got ${seen.size}`);
+  // Regex builtins — the reason for the WebAssembly engine — are offered.
+  for (const label of ['test(', 'match(', 'capture(', 'gsub(', 'sub(', 'scan(', 'splits(']) {
+    assert.ok(seen.has(label), `${label} must be completable`);
+  }
+});
+
+test('the WebAssembly jq engine runs regex, dates, and multi-output queries', () => {
+  assert.equal(jqEngine.version(), 'jq-1.8.2');
+  // (Regex escapes are doubled twice: once for this JS literal, once for
+  // the jq string literal the regex sits in — exactly as typed in jq.)
+  const contosoMails = SAMPLE_USERS_RESPONSE.value.filter((u) => /@contoso\.com$/.test(u.mail || '')).length;
+  assert.deepEqual(runJq('[.value[] | select((.mail // "") | test("@contoso\\\\.com$"))] | length', SAMPLE_USERS_RESPONSE), contosoMails);
+  // Real jq semantics: a regex builtin on null is an error, not a silent skip.
+  throwsMessage(() => runJq('.value[] | select(.mail | test("x"))', { value: [{ mail: null }] }), /cannot be matched, as it is not a string/);
+  assert.deepEqual(runJq('.value[0].displayName | capture("(?<first>\\\\w+) (?<last>\\\\w+)")', SAMPLE_USERS_RESPONSE), {
+    first: 'Adele',
+    last: 'Vance'
+  });
+  assert.equal(runJq('.value[1].displayName | gsub("l"; "L")', SAMPLE_USERS_RESPONSE), 'ALex WiLber');
+  assert.equal(runJq('1700000000 | todate', null), '2023-11-14T22:13:20Z');
+  // A stream of several outputs comes back as an array, none as [].
+  assert.deepEqual(runJq('.value[].id', SAMPLE_USERS_RESPONSE), ['1', '2', '3']);
+  assert.deepEqual(runJq('empty', SAMPLE_USERS_RESPONSE), []);
+  assert.equal(runJq('.missing', SAMPLE_USERS_RESPONSE), null);
+  // JSON text input is accepted as-is (the evaluator caches it).
+  assert.equal(runJq('.a', '{"a": 42}'), 42);
+});
+
+/** assert.throws whose pattern is matched against error.message alone. */
+function throwsMessage(fn, pattern) {
+  assert.throws(fn, (e) => {
+    assert.match(e.message, pattern);
+    return true;
+  });
+}
+
+test('jq errors are reported as tidy messages', () => {
+  assert.throws(() => runJq('.foo ]', {}), (e) => {
+    assert.match(e.message, /^syntax error, unexpected INVALID_CHARACTER/);
+    assert.ok(!/compile error/.test(e.message), e.message);
+    assert.ok(e.message.includes('.foo ]'), 'keeps the source excerpt');
+    return true;
+  });
+  throwsMessage(() => runJq('.value | nope', {}), /^nope\/0 is not defined/);
+  throwsMessage(() => runJq('.a.b', { a: 'str' }), /^Cannot index string with string \("b"\)$/);
+  throwsMessage(() => runJq('error("boom")', {}), /^boom$/);
+  // A runtime error after some output must not leak that output into the message.
+  throwsMessage(() => runJq('.[] | test("x")', ['ok', null]), /^null \(null\) cannot be matched, as it is not a string$/);
+});
+
+test('jqErrorMessage strips jq prefixes and the compile-error tally', () => {
+  assert.equal(GEJQ.jqErrorMessage({ stderr: 'jq: error (at /dev/stdin:0): boom' }), 'boom');
+  assert.equal(GEJQ.jqErrorMessage({ stderr: 'jq: error (at <stdin>:12): Cannot iterate over null' }), 'Cannot iterate over null');
+  assert.equal(
+    GEJQ.jqErrorMessage({ stderr: 'jq: error: syntax error, unexpected end of file at <top-level>, line 1:\n    .a |\n       ^\njq: 1 compile error\n' }),
+    'syntax error, unexpected end of file at <top-level>, line 1:\n    .a |\n       ^'
+  );
+  assert.equal(GEJQ.jqErrorMessage({ stderr: '', message: 'jq: error: module not found: x\n\njq: 1 compile error' }), 'module not found: x');
+  assert.equal(GEJQ.jqErrorMessage(new Error('plain')), 'plain');
+  assert.equal(GEJQ.jqErrorMessage({ stderr: '\n\n' }), 'evaluation failed');
+});
+
+test('createJqEngine loads lazily, enforces the input ceiling, and restarts after an abort', async () => {
+  // Stub library: records instance creations and can be told to "abort"
+  // (a non-JqError throw, as an Emscripten heap exhaustion produces).
+  let created = 0;
+  let abortNext = false;
+  const lib = {
+    loadJq: async () => {
+      created += 1;
+      return {
+        version: 'jq-stub',
+        json: (text, query) => {
+          if (abortNext) {
+            abortNext = false;
+            throw new WebAssembly.RuntimeError('Aborted()');
+          }
+          if (query === 'bad') {
+            const e = new Error('jq: error (at /dev/stdin:0): bad\n');
+            e.name = 'JqError';
+            e.stderr = 'jq: error (at /dev/stdin:0): bad';
+            e.exitCode = 5;
+            throw e;
+          }
+          return query === 'many' ? [1, 2] : query === 'none' ? [] : [JSON.parse(text)];
+        }
+      };
+    }
+  };
+  const engine = GEJQ.createJqEngine(lib, { inputLimit: 20 });
+  assert.equal(engine.ready(), false);
+  throwsMessage(() => engine.evaluate({ a: 1 }, '.'), /^jq engine is still loading$/);
+  const p1 = engine.load();
+  const p2 = engine.load();
+  assert.equal(p1, p2, 'concurrent loads share one promise');
+  await p1;
+  assert.equal(created, 1);
+  assert.equal(engine.ready(), true);
+  assert.equal(engine.version(), 'jq-stub');
+  assert.deepEqual(engine.evaluate({ a: 1 }, '.'), { a: 1 });
+  assert.deepEqual(engine.evaluate({ a: 1 }, 'many'), [1, 2]);
+  assert.deepEqual(engine.evaluate({ a: 1 }, 'none'), []);
+  assert.equal(engine.evaluate(undefined, '.'), null, 'undefined input is jq null');
+  throwsMessage(() => engine.evaluate({ a: 1 }, 'bad'), /^bad$/);
+  throwsMessage(() => engine.evaluate({ a: 'x'.repeat(30) }, '.'), /handles up to 20 B per query/);
+  assert.equal(created, 1, 'a jq error or a refused input does not restart the engine');
+  abortNext = true;
+  throwsMessage(() => engine.evaluate({ a: 1 }, '.'), /^jq ran out of memory .* the engine was restarted/);
+  assert.equal(engine.ready(), false, 'the aborted instance is dropped');
+  assert.equal(engine.restarts(), 1);
+  await engine.load();
+  assert.equal(created, 2, 'a fresh instance replaces it');
+  assert.deepEqual(engine.evaluate({ a: 2 }, '.'), { a: 2 });
+});
+
+test('createJqEngine reports a missing or failing library on evaluate', async () => {
+  const none = GEJQ.createJqEngine(null);
+  await assert.rejects(none.load(), /not loaded in this context/);
+  assert.ok(none.failed());
+  throwsMessage(() => none.evaluate({}, '.'), /^jq engine failed to load: .*not loaded/);
+  const failing = GEJQ.createJqEngine({ loadJq: () => Promise.reject(new Error('CompileError: wasm blocked by CSP')) });
+  await assert.rejects(failing.load(), /wasm blocked/);
+  throwsMessage(() => failing.evaluate({}, '.'), /^jq engine failed to load: CompileError: wasm blocked by CSP$/);
+  assert.equal(GEJQ.JQ_INPUT_LIMIT, 40 * 1024 * 1024);
+});
+
+test('fetchPercent floors to whole numbers and hides itself without a count', () => {
+  assert.equal(GEJQ.fetchPercent(3, 9), 33);
+  assert.equal(GEJQ.fetchPercent(6, 9), 66);
+  assert.equal(GEJQ.fetchPercent(9, 9), 100);
+  assert.equal(GEJQ.fetchPercent(996, 1000), 99, 'never rounds up to 100 early');
+  assert.equal(GEJQ.fetchPercent(0, 40892), 0);
+  assert.equal(GEJQ.fetchPercent(30700, 40892), 75);
+  assert.equal(GEJQ.fetchPercent(41000, 40892), 100, 'capped when the directory grew');
+  assert.equal(GEJQ.fetchPercent(2, '7'), 28, 'digit strings are accepted');
+  assert.equal(GEJQ.fetchPercent(5, null), null);
+  assert.equal(GEJQ.fetchPercent(5, undefined), null);
+  assert.equal(GEJQ.fetchPercent(5, 0), null);
+  assert.equal(GEJQ.fetchPercent(5, -1), null);
+  assert.equal(GEJQ.fetchPercent(5, 'many'), null);
+  assert.equal(GEJQ.fetchPercent(NaN, 9), null);
+  assert.equal(GEJQ.fetchPercent(-1, 9), null);
 });
 
 test('toTsv produces tab-separated rows', () => {

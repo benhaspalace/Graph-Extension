@@ -551,7 +551,8 @@
   }
 
   // Function lists mirror what the bundled engines actually implement
-  // (jmespath.js functionTable / jqts builtins) — verified by tests.
+  // (jmespath.js functionTable / the builtins of the WebAssembly jq) —
+  // verified by tests.
   var QUERY_COMPLETIONS = {
     jmespath: [
       fn('abs', 'absolute value'),
@@ -582,41 +583,137 @@
       fn('values', 'object values')
     ],
     jq: [
+      // jq 1.8.2 builtins (real jq, compiled to WebAssembly — see
+      // vendor/jq-wasm.js). A builtin that exists both bare and with
+      // arguments (add, flatten, paths, …) is listed in its common form.
+      // Omitted on purpose: I/O and CLI-only builtins (input, inputs,
+      // env, halt, stderr, input_filename, …) and the raw libm functions
+      // (sin, j0, lgamma_r, …) — they compile but mean nothing here.
+      word('abs', 'absolute value'),
       word('add', 'sum / concatenate items'),
       word('all', 'true when all items truthy'),
       word('any', 'true when any item truthy'),
+      word('arrays', 'keep only arrays'),
+      word('ascii_downcase', 'lowercase ASCII letters'),
+      word('ascii_upcase', 'uppercase ASCII letters'),
+      word('booleans', 'keep only booleans'),
+      fn('bsearch', 'binary search in a sorted array'),
+      word('builtins', 'list every builtin (name/arity)'),
+      fn('capture', 'regex named groups → object'),
+      word('ceil', 'round up'),
+      word('combinations', 'cartesian product of arrays'),
       fn('contains', 'containment test'),
+      word('debug', 'pass through (message to console)'),
+      fn('del', 'delete paths'),
+      fn('delpaths', 'delete a list of paths'),
       word('empty', 'no output'),
-      word('first', 'first output'),
+      fn('endswith', 'string suffix test'),
+      fn('error', 'raise an error'),
+      word('exp', 'e^x'),
+      word('explode', 'string → codepoints'),
+      word('first', 'first item'),
       word('flatten', 'flatten nested arrays'),
       word('floor', 'round down'),
-      fn('from_entries', 'build object from {key,value} list'),
+      word('from_entries', 'build object from {key,value} list'),
+      word('fromdate', 'ISO 8601 string → Unix time'),
+      word('fromdateiso8601', 'ISO 8601 string → Unix time'),
+      word('fromjson', 'parse a JSON string'),
+      fn('fromstream', 'rebuild values from a stream'),
+      fn('getpath', 'value at a path array'),
+      word('gmtime', 'Unix time → broken-down UTC time'),
       fn('group_by', 'group items by expression'),
+      fn('gsub', 'regex replace all matches'),
       fn('has', 'key / index presence'),
-      fn('endswith', 'string suffix test'),
-      word('keys', 'object keys / array indexes'),
-      word('last', 'last output'),
+      word('implode', 'codepoints → string'),
+      fn('in', 'key present in the given object'),
+      fn('index', 'first index of substring / element'),
+      fn('indices', 'all indices of substring / element'),
+      word('infinite', 'positive infinity'),
+      fn('inside', 'reverse containment test'),
+      fn('isempty', 'true when a filter yields nothing'),
+      word('isinfinite', 'test for ±infinity'),
+      word('isnan', 'test for NaN'),
+      word('isnormal', 'test for a normal number'),
+      word('iterables', 'keep only arrays and objects'),
+      fn('join', 'join strings with a separator'),
+      word('keys', 'object keys / array indexes, sorted'),
+      word('keys_unsorted', 'object keys in insertion order'),
+      word('last', 'last item'),
       word('length', 'count items / chars'),
+      fn('limit', 'first n outputs of a filter'),
+      word('localtime', 'Unix time → broken-down local time'),
+      word('log', 'natural logarithm'),
+      word('log10', 'base-10 logarithm'),
+      word('log2', 'base-2 logarithm'),
+      word('ltrim', 'strip leading whitespace'),
+      fn('ltrimstr', 'remove a prefix'),
       fn('map', 'apply filter to each item'),
+      fn('map_values', 'apply filter to each value'),
+      fn('match', 'regex match details'),
       word('max', 'largest value'),
       fn('max_by', 'largest by expression'),
       word('min', 'smallest value'),
       fn('min_by', 'smallest by expression'),
+      word('mktime', 'broken-down time → Unix time'),
+      word('nan', 'not-a-number'),
+      word('not', 'boolean negation'),
+      word('now', 'current Unix time'),
+      fn('nth', 'n-th item / n-th output'),
+      word('nulls', 'keep only nulls'),
+      word('numbers', 'keep only numbers'),
+      word('objects', 'keep only objects'),
+      fn('path', 'path array of a filter'),
+      word('paths', 'every path in the value'),
+      fn('pick', 'keep only the given paths'),
+      fn('pow', 'x^y'),
       fn('range', 'number sequence'),
-      word('reverse', 'reverse array'),
+      word('recurse', 'every value, recursively (..)'),
+      fn('repeat', 'apply repeatedly, emitting each result'),
+      word('reverse', 'reverse array / string'),
+      fn('rindex', 'last index of substring / element'),
+      word('round', 'round to nearest integer'),
+      word('rtrim', 'strip trailing whitespace'),
+      fn('rtrimstr', 'remove a suffix'),
+      word('scalars', 'keep only scalars'),
+      fn('scan', 'every regex match'),
       fn('select', 'keep items matching condition'),
+      fn('setpath', 'set the value at a path array'),
+      fn('skip', 'drop the first n outputs'),
       word('sort', 'sort array'),
       fn('sort_by', 'sort by expression'),
+      fn('split', 'split string (separator or regex)'),
+      fn('splits', 'split by regex, emitting each part'),
       word('sqrt', 'square root'),
       fn('startswith', 'string prefix test'),
-      fn('to_entries', 'object → {key,value} list'),
+      fn('strftime', 'format a broken-down time'),
+      word('strings', 'keep only strings'),
+      fn('strptime', 'parse a time string'),
+      fn('sub', 'regex replace first match'),
+      fn('test', 'regex test'),
+      word('to_entries', 'object → {key,value} list'),
+      word('toboolean', 'convert to boolean'),
+      word('todate', 'Unix time → ISO 8601 string'),
+      word('todateiso8601', 'Unix time → ISO 8601 string'),
+      word('tojson', 'serialize to a JSON string'),
       word('tonumber', 'convert to number'),
+      word('tostream', 'value → stream events'),
       word('tostring', 'convert to string'),
+      word('transpose', 'transpose an array of arrays'),
+      word('trim', 'strip surrounding whitespace'),
+      fn('trimstr', 'remove a prefix and suffix'),
+      word('trunc', 'truncate toward zero'),
+      fn('truncate_stream', 'drop leading path depth from a stream'),
       word('type', 'type name'),
       fn('unique_by', 'dedupe by expression'),
       word('unique', 'dedupe array'),
-      word('values', 'object / array values'),
-      fn('with_entries', 'transform object entries')
+      fn('until', 'apply until condition holds'),
+      word('utf8bytelength', 'string length in UTF-8 bytes'),
+      word('values', 'keep only non-null values'),
+      fn('walk', 'apply filter to every value, bottom-up'),
+      fn('while', 'apply while condition holds'),
+      fn('with_entries', 'transform object entries'),
+      fn('IN', 'membership test'),
+      fn('INDEX', 'index items by expression → object')
     ],
     jsonpath: [
       snippet('wildcard', '[*]', 'every item'),
@@ -3537,6 +3634,188 @@
     return base + '-' + stamp + '.' + extension;
   }
 
+  // ------------------------------------------------------------ jq engine
+
+  /**
+   * jq is real jq (1.8.2) compiled to WebAssembly (vendor/jq-wasm.js).
+   * Its heap is fixed by the upstream binary at 256 MB, and jq's in-memory
+   * representation of a document is several times its JSON text — 52 MB of
+   * users runs, 70 MB aborts the instance (measured; see the PR). The
+   * ceiling below leaves room for the query's own intermediates
+   * (map/sort_by/group_by copy the data). It is a length in UTF-16 code
+   * units of the JSON text, which is the cheap number both callers have.
+   */
+  var JQ_INPUT_LIMIT = 40 * 1024 * 1024;
+  var JQ_HEAP_MB = 256;
+
+  /**
+   * jq's stderr, trimmed to what a panel error line should say: the
+   * `jq: error (at /dev/stdin:0): ` / `jq: error: ` prefixes go (the panel
+   * already prefixes the language name), and so does the `jq: 1 compile
+   * error` tally line. The source excerpt + caret of a compile error stays,
+   * it is the useful part. Prefers `stderr` over `message` because the
+   * wrapper's message also carries whatever stdout came before the error.
+   */
+  function jqErrorMessage(error) {
+    var raw =
+      error && typeof error.stderr === 'string' && error.stderr.trim() !== ''
+        ? error.stderr
+        : error && typeof error.message === 'string'
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : '';
+    var lines = String(raw).split('\n');
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].replace(/\s+$/, '');
+      if (/^jq: \d+ compile errors?$/.test(line)) {
+        continue;
+      }
+      out.push(line.replace(/^jq: error \(at [^)]*\): /, '').replace(/^jq: error: /, ''));
+    }
+    while (out.length > 0 && out[out.length - 1] === '') {
+      out.pop();
+    }
+    while (out.length > 0 && out[0] === '') {
+      out.shift();
+    }
+    return out.length > 0 ? out.join('\n') : 'evaluation failed';
+  }
+
+  /**
+   * Adapter over the jq-wasm library (`lib` is its global, `JQWASM`),
+   * shared by the evaluator frame and the panel's local fallback path.
+   * Creating the WebAssembly instance is asynchronous (`load()`), calls
+   * are synchronous once it is up (`evaluate()`), and the instance is
+   * treated as disposable: an Emscripten abort (heap exhaustion on a
+   * dataset past the ceiling, in practice) leaves it dead, so the adapter
+   * drops it, reports why, and loads a fresh one for the next query.
+   * Dependency-free on purpose — the library is injected, so this stays
+   * unit-testable with a stub.
+   */
+  function createJqEngine(lib, options) {
+    var inputLimit = options && typeof options.inputLimit === 'number' ? options.inputLimit : JQ_INPUT_LIMIT;
+    var handle = null;
+    var loading = null;
+    var loadError = null;
+    var restarts = 0;
+
+    function load() {
+      if (handle !== null) {
+        return Promise.resolve(handle);
+      }
+      if (loading !== null) {
+        return loading;
+      }
+      if (!lib || typeof lib.loadJq !== 'function') {
+        loadError = new Error('the jq engine (vendor/jq-wasm.js) is not loaded in this context');
+        return Promise.reject(loadError);
+      }
+      loading = Promise.resolve()
+        .then(function () {
+          return lib.loadJq();
+        })
+        .then(
+          function (loaded) {
+            handle = loaded;
+            loading = null;
+            loadError = null;
+            return loaded;
+          },
+          function (e) {
+            loading = null;
+            loadError = e instanceof Error ? e : new Error(String(e));
+            throw loadError;
+          }
+        );
+      return loading;
+    }
+
+    /**
+     * Run `query` over `input` (a JSON value, or its JSON text — callers
+     * that already hold the text pass it to skip a stringify). jq emits a
+     * stream; the common single output is unwrapped, several come back as
+     * an array, none as [].
+     */
+    function evaluate(input, query) {
+      if (handle === null) {
+        throw new Error(
+          loadError ? 'jq engine failed to load: ' + (loadError.message || String(loadError)) : 'jq engine is still loading'
+        );
+      }
+      var text = typeof input === 'string' ? input : JSON.stringify(input === undefined ? null : input);
+      if (typeof text !== 'string') {
+        text = 'null';
+      }
+      if (text.length > inputLimit) {
+        throw new Error(
+          'this dataset is ' + formatBytes(text.length) + ' of JSON; the WebAssembly jq engine (' + JQ_HEAP_MB +
+            ' MB heap) handles up to ' + formatBytes(inputLimit) +
+            ' per query — narrow the Graph query ($select, $filter, $top) or use JMESPath / JSONPath on this response'
+        );
+      }
+      var outputs;
+      try {
+        outputs = handle.json(text, query);
+      } catch (e) {
+        if (e && e.name === 'JqError') {
+          throw new Error(jqErrorMessage(e));
+        }
+        // Not a jq error: the WebAssembly instance itself failed (an
+        // Emscripten abort on heap exhaustion is the realistic case) and
+        // is unusable from here on — replace it.
+        handle = null;
+        restarts += 1;
+        load().catch(function () {
+          /* surfaces on the next evaluate() as a load error */
+        });
+        throw new Error(
+          'jq ran out of memory on this dataset (' + formatBytes(text.length) + ' of JSON, ' + JQ_HEAP_MB +
+            ' MB WebAssembly heap); the engine was restarted — narrow the query or the dataset'
+        );
+      }
+      return outputs.length === 1 ? outputs[0] : outputs;
+    }
+
+    return {
+      load: load,
+      evaluate: evaluate,
+      ready: function () {
+        return handle !== null;
+      },
+      failed: function () {
+        return loadError;
+      },
+      restarts: function () {
+        return restarts;
+      },
+      version: function () {
+        return handle !== null ? handle.version : null;
+      },
+      inputLimit: inputLimit
+    };
+  }
+
+  /**
+   * Whole-number progress of an auto-fetch chain: `items` fetched so far
+   * out of the `@odata.count` the first page announced. null when there
+   * is no usable count (the request had no `$count=true`, or the API
+   * returned something odd). Floored, never rounded up: 99.6 % reads 99,
+   * so 100 only appears once every item is in. Capped at 100 for the
+   * case where the directory grew between the count and the last page.
+   */
+  function fetchPercent(items, count) {
+    var total = typeof count === 'string' && /^\d+$/.test(count) ? Number(count) : count;
+    if (typeof total !== 'number' || !isFinite(total) || total <= 0) {
+      return null;
+    }
+    if (typeof items !== 'number' || !isFinite(items) || items < 0) {
+      return null;
+    }
+    return Math.min(100, Math.floor((items / total) * 100));
+  }
+
   return {
     jmesKey: jmesKey,
     jsonPathKey: jsonPathKey,
@@ -3581,6 +3860,10 @@
     safeJsonParse: safeJsonParse,
     describeResult: describeResult,
     formatBytes: formatBytes,
+    fetchPercent: fetchPercent,
+    createJqEngine: createJqEngine,
+    jqErrorMessage: jqErrorMessage,
+    JQ_INPUT_LIMIT: JQ_INPUT_LIMIT,
     summarizeUrl: summarizeUrl,
     trimHistory: trimHistory,
     suggestQueries: suggestQueries,

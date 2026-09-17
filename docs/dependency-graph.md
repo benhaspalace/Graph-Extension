@@ -29,7 +29,7 @@ graph TD
     subgraph isolated["Isolated world — document_idle"]
       jmes["vendor/jmespath.js"]
       jsonpath["vendor/jsonpath-plus.js"]
-      jqts["vendor/jqts.js"]
+      jqwasm["vendor/jq-wasm.js<br/>(jq 1.8.2 · WebAssembly)"]
       codemirror["vendor/codemirror.js"]
       qu_content["src/query-utils.js"]
       content["src/content.js<br/>panel UI in a ShadowRoot"]
@@ -47,7 +47,7 @@ graph TD
     evaljs["src/evaluator.js<br/>dataset cache + query/export/diff"]
     jmes2["vendor/jmespath.js"]
     jsonpath2["vendor/jsonpath-plus.js"]
-    jqts2["vendor/jqts.js"]
+    jqwasm2["vendor/jq-wasm.js<br/>(jq 1.8.2 · WebAssembly)"]
     qu_eval["src/query-utils.js"]
   end
 
@@ -58,7 +58,7 @@ graph TD
   manifest --> interceptor
   manifest --> jmes
   manifest --> jsonpath
-  manifest --> jqts
+  manifest --> jqwasm
   manifest --> codemirror
   manifest --> qu_content
   manifest --> content
@@ -71,7 +71,7 @@ graph TD
   content -->|embeds| evalhtml
   evalhtml --> jmes2
   evalhtml --> jsonpath2
-  evalhtml --> jqts2
+  evalhtml --> jqwasm2
   evalhtml --> qu_eval
   evalhtml --> evaljs
   popup --> popupcss
@@ -120,7 +120,7 @@ graph LR
   subgraph shipped["Shipped in the extension (vendor/, pinned by SHA-256)"]
     jmes["jmespath.js 0.16.0<br/>MIT"]
     jsonpath["jsonpath-plus 10.3.0<br/>MIT"]
-    jqts["jqts 0.0.8<br/>MIT"]
+    jqwasm["jq-wasm 3.0.0-jq-1.8.2<br/>(jq 1.8.2 as WebAssembly)<br/>MIT"]
     cm["CodeMirror 6 bundle<br/>MIT (esbuild IIFE)"]
     cm_state["@codemirror/state 6.7.1"]
     cm_view["@codemirror/view 6.43.8"]
@@ -148,7 +148,7 @@ graph LR
 
   src --> jmes
   src --> jsonpath
-  src --> jqts
+  src --> jqwasm
   src --> cm
   node --> src
   pw --> src

@@ -39,11 +39,18 @@ within a few business days.
   extension's own code (`src/**`). The UI is built in a ShadowRoot exclusively
   via `createElement`/`textContent`, so untrusted Graph response data is never
   interpreted as markup. Query results are evaluated by the vendored query
-  engines as data, not as JavaScript.
+  engines as data, not as JavaScript. The jq engine is jq itself compiled
+  to WebAssembly (`vendor/jq-wasm.js`): a fixed, checksummed binary shipped
+  with the extension and instantiated from its embedded bytes — never from
+  anything fetched or computed at runtime — and it only ever receives JSON
+  text and a filter string.
 - **Strict Content-Security-Policy.** Extension pages declare
-  `script-src 'self'; object-src 'self'; base-uri 'none'` (Manifest V3 also
-  forbids remote code by default). Query engines and the editor are bundled
-  locally; nothing is fetched from a CDN.
+  `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; base-uri 'none'`
+  (Manifest V3 also forbids remote code by default). `'wasm-unsafe-eval'` is
+  the narrowest directive that lets a page instantiate WebAssembly at all; it
+  does not allow `eval` or any string-to-code path, and the only module it
+  is used for is the vendored jq binary. Query engines and the editor are
+  bundled locally; nothing is fetched from a CDN.
 - **Cross-context messaging is validated.** The MAIN-world ↔ isolated-world
   `postMessage` bridge checks `event.source === window` and
   `event.origin === location.origin` and validates the message shape.

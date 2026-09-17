@@ -4,7 +4,8 @@ A browser extension for **Chrome** and **Microsoft Edge** that adds JSON query
 capabilities to [Microsoft Graph Explorer](https://developer.microsoft.com/en-us/graph/graph-explorer).
 Run a Graph query, then filter, reshape, sort, and export the JSON response
 with [JMESPath](https://jmespath.org/) — the same query language as Azure CLI's
-`--query` option — or with [JSONPath](https://github.com/JSONPath-Plus/JSONPath).
+`--query` option — with [JSONPath](https://github.com/JSONPath-Plus/JSONPath),
+or with [jq](https://jqlang.org/) (real jq 1.8.2, running as WebAssembly).
 
 <!-- The badge tracks main so it never goes stale after a feature branch merges. -->
 [![Build & tests](https://github.com/benhaspalace/Graph-Explorer-Browser-Extension/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/benhaspalace/Graph-Explorer-Browser-Extension/actions/workflows/build.yml?query=branch%3Amain)
@@ -28,6 +29,7 @@ status for this branch.
   - JMESPath: `value[?jobTitle == 'Auditor'].{name: displayName, email: mail}`
   - JSONPath: `$.value[?(@.jobTitle == 'Auditor')].displayName`
   - jq: `.value | map(select(.jobTitle == "Auditor")) | .[].displayName`
+    (real jq 1.8.2 compiled to WebAssembly — every builtin, regex included)
   Switching languages auto-converts simple path queries (keys, wildcards,
   indexes, slices, simple filters, counts) between the languages; queries
   outside that subset are left untouched with the error line and refreshed
@@ -60,7 +62,7 @@ status for this branch.
   dropdown: property names resolved from the selected response at the path
   before the cursor (`value[].` → `displayName`, `mail`, … with type hints)
   ranked first, followed by the language's functions and operators (all 26
-  JMESPath functions, the jq builtins the bundled engine supports, JSONPath
+  JMESPath functions, jq's builtins (all of jq 1.8.2's, regex included), JSONPath
   syntax snippets). ↑/↓ to choose, Enter/Tab to accept, Esc to dismiss.
   Suggestions never appear inside string literals.
 - **Paste method + URL** — pasting a request with its HTTP method in front
@@ -91,7 +93,11 @@ status for this branch.
   limits are the same either way. While pages stream in, the row shows
   live progress (pages · items · size) behind a leading **⏸ Pause**
   button — pausing is instant (the page in flight is aborted and simply
-  retried on resume). There is no stop button: a chain you never resume
+  retried on resume). When the first page carries an `@odata.count`
+  (ask for it with `$count=true`; the Advanced-queries setting adds it
+  for `$filter`/`$search`/`$orderby` requests), a progress bar and a
+  whole-number percentage of items fetched so far sit next to the
+  button, while running and while paused. There is no stop button: a chain you never resume
   just stays paused with everything fetched so far queryable, and
   running a new query (or turning ⟳ off mid-run) closes it out. The
   configured page-count and data-size limits (defaults: 50 pages /
@@ -238,20 +244,21 @@ settings), and switching auto-converts simple path queries. Pick by task:
 
 | | JMESPath *(default)* | JSONPath | jq |
 | --- | --- | --- | --- |
-| **Strengths** | Reshape/project into new objects (`{name: displayName}`), ~26 functions, sort/count; same language as Azure CLI `--query` | Recursive search (`..`) anywhere in the tree; **regex** in filters; simple selection syntax | Most expressive: pipelines, `map`/`select`/`reduce`/`group_by`, arithmetic, string interpolation, build any output shape |
-| **Limitations** | No regex; string tests limited to `contains`/`starts_with`/`ends_with` | **Selection only** — can't reshape or compute new values; result is always the flat array of matches; no `=~` operator | Bundled engine is **core jq only** (jqts) — not every builtin, and **no regex** (`test`/`match`/`gsub` unavailable) |
-| **Best for** | Everyday pluck / filter / reshape / count | Finding & filtering nodes, deep search, regex matching | Complex reshaping and aggregation |
-| **Regex?** | ❌ | ✅ `$.value[?(@.mail.match(/@contoso\.com$/))]` | ❌ |
+| **Strengths** | Reshape/project into new objects (`{name: displayName}`), ~26 functions, sort/count; same language as Azure CLI `--query` | Recursive search (`..`) anywhere in the tree; **regex** in filters; simple selection syntax | Most expressive: pipelines, `map`/`select`/`reduce`/`group_by`, arithmetic, string interpolation, **regex** (`test`/`match`/`capture`/`gsub`), dates, build any output shape — it is jq 1.8.2 itself |
+| **Limitations** | No regex; string tests limited to `contains`/`starts_with`/`ends_with` | **Selection only** — can't reshape or compute new values; result is always the flat array of matches; no `=~` operator | Datasets above **40 MB of JSON** per query are refused (the WebAssembly engine's heap is 256 MB); no `input`/`env`/file builtins (nothing to read) |
+| **Best for** | Everyday pluck / filter / reshape / count | Finding & filtering nodes, deep search, regex matching | Complex reshaping, aggregation, regex |
+| **Regex?** | ❌ | ✅ `$.value[?(@.mail.match(/@contoso\.com$/))]` | ✅ `.value[] \| select(.mail \| test("@contoso\\.com$"))` |
 | **Example** | `value[?jobTitle == 'Auditor'].{name: displayName, email: mail}` | `$.value[?(@.jobTitle == 'Auditor')].displayName` | `.value \| map(select(.jobTitle == "Auditor")) \| .[].displayName` |
 
 Rules of thumb: reach for **JMESPath** to pull fields into a tidy shape,
 **JSONPath** when you need regex or to search deep in the tree, and **jq**
-when you need real transformation or aggregation. Note that **regex lives
-only in JSONPath** today — it works inside filter predicates (`[?(…)]`) via
-`@.field.match(/…/)` or `/…/.test(@.field)`, and runs under the extension's
+when you need real transformation, aggregation, or regex. Regex is
+available in **JSONPath** — inside filter predicates (`[?(…)]`) via
+`@.field.match(/…/)` or `/…/.test(@.field)`, running under the extension's
 strict Content-Security-Policy because jsonpath-plus uses a safe,
-`eval`-free evaluator. The bundled jq (jqts) covers core jq but omits the
-regex builtins.
+`eval`-free evaluator — and in **jq** through its own builtins (`test`,
+`match`, `capture`, `scan`, `sub`, `gsub`, `splits`; Oniguruma syntax, as
+in jq proper). JMESPath has none.
 
 ### Query examples (JMESPath)
 
@@ -267,8 +274,8 @@ regex builtins.
 
 See the [JMESPath tutorial](https://jmespath.org/tutorial.html), the
 [JSONPath syntax reference](https://github.com/JSONPath-Plus/JSONPath#syntax-through-examples),
-and the [jq manual](https://jqlang.github.io/jq/manual/) (note the bundled
-engine covers core jq, without the regex builtins).
+and the [jq manual](https://jqlang.org/manual/v1.8/) (the bundled engine is
+jq 1.8.2 itself, so the whole manual applies).
 
 ## How it works
 
@@ -287,7 +294,7 @@ engine covers core jq, without the regex builtins).
   iframe that Chrome hosts in the extension's own process — every query
   evaluation, exact-size walk, table sort, export serialization, and diff
   runs on that process's thread whenever the frame is available, so a
-  multi-second jq run over a 100 MB dataset never blocks typing, the
+  multi-second jq run over a 40 MB dataset never blocks typing, the
   page, or the auto-fetch controls. Large datasets never even touch the
   page thread: the interceptor streams auto-fetch pages into the
   evaluator one page at a time and ships large single responses as raw
@@ -300,8 +307,17 @@ engine covers core jq, without the regex builtins).
 - `vendor/jmespath.js` ([jmespath.js](https://github.com/jmespath/jmespath.js)
   0.16.0, MIT), `vendor/jsonpath-plus.js`
   ([jsonpath-plus](https://github.com/JSONPath-Plus/JSONPath) 10.3.0, MIT),
-  and `vendor/jqts.js` ([jqts](https://github.com/kentdotn/jqts) 0.0.8, MIT —
-  a pure-JS jq clone covering core jq; no WASM needed) evaluate the queries.
+  and `vendor/jq-wasm.js` ([jq-wasm](https://github.com/owenthereal/jq-wasm)
+  3.0.0-jq-1.8.2, MIT — real [jq](https://github.com/jqlang/jq) 1.8.2
+  compiled to WebAssembly with Emscripten, the `.wasm` bytes embedded in
+  the file) evaluate the queries. The jq instance is created asynchronously
+  the first time it is needed (≈60 ms; the evaluator frame does it as soon
+  as it loads), which is why the manifest's CSP carries
+  `'wasm-unsafe-eval'`. Its heap is fixed at 256 MB by the upstream binary
+  and jq keeps a document in memory at several times its JSON size, so the
+  panel refuses jq over datasets above 40 MB of JSON with a message that
+  says so, and an instance that aborts anyway is replaced automatically
+  (`GEJQ.createJqEngine` in `src/query-utils.js`).
 - [`docs/dependency-graph.md`](docs/dependency-graph.md) draws the whole
   picture: which file loads, messages, or depends on which (runtime,
   third-party, and build/release), and what GitHub's own dependency graph
@@ -399,7 +415,7 @@ src/query-utils.js     Pure helpers, shared with unit tests
 src/background.js      Service worker (Alt+G / Alt+Q commands)
 vendor/jmespath.js     Vendored JMESPath engine (MIT)
 vendor/jsonpath-plus.js Vendored JSONPath engine (MIT)
-vendor/jqts.js         Vendored jq engine (jqts, MIT)
+vendor/jq-wasm.js      Vendored jq engine (jq 1.8.2 as WebAssembly via jq-wasm, MIT)
 vendor/codemirror.js   Vendored CodeMirror 6 bundle (MIT)
 vendor/CHECKSUMS.txt   Pinned SHA-256 of each vendored bundle
 popup/                 Toolbar popup: instructions + settings
@@ -427,11 +443,6 @@ One rule matters more than the rest: **never paste real tenant data** — tokens
 cookies, user or tenant identifiers, mail addresses, or raw Graph responses —
 into an issue, pull request, or screenshot. Graph Explorer's sample tenant
 (available when signed out) makes shareable reproductions easy.
-
-## Future ideas
-
-- Full jq builtin coverage via a WASM build of real jq (the bundled jqts
-  engine covers core jq features).
 
 ## License
 

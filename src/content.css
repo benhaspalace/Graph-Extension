@@ -587,6 +587,37 @@
   font-size: 11px;
 }
 
+/* Progress bar + percentage (shown only when the chain knows its
+   @odata.count). The fill width is set inline by the panel. */
+.gejq-fetch-bar {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 72px;
+  height: 6px;
+  border: 1px solid var(--gejq-border);
+  border-radius: 4px;
+  background: var(--gejq-bg-subtle);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.gejq-fetch-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--gejq-accent);
+  transition: width 0.2s ease-out;
+}
+
+.gejq-fetch-pct {
+  flex: 0 0 auto;
+  min-width: 4ch;
+  text-align: right;
+  font-family: Consolas, "Cascadia Code", Menlo, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Query editor grayed out while auto-fetch is running (evaluating against
    the continuously growing dataset would freeze the panel). */
 .gejq-query-locked {

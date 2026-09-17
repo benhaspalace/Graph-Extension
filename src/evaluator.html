@@ -7,14 +7,14 @@
     Hidden helper page embedded by the content script as an iframe.
     chrome-extension:// frames run in the extension's own process, so the
     query engines below evaluate off the Graph Explorer page's main
-    thread — a multi-second jq run over a 100 MB dataset no longer blocks
+    thread — a multi-second jq run over a 40 MB dataset no longer blocks
     typing or the auto-fetch controls. See src/evaluator.js.
   -->
 </head>
 <body>
   <script src="../vendor/jmespath.js"></script>
   <script src="../vendor/jsonpath-plus.js"></script>
-  <script src="../vendor/jqts.js"></script>
+  <script src="../vendor/jq-wasm.js"></script>
   <script src="query-utils.js"></script>
   <script src="evaluator.js"></script>
 </body>

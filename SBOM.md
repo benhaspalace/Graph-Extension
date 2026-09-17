@@ -17,8 +17,17 @@ components and the extension's own files depend on each other.
 | --- | --- | --- | --- | --- | --- |
 | jmespath.js | 0.16.0 | https://github.com/jmespath/jmespath.js | MIT | `vendor/jmespath.js` | `a88012bb68aa9e52a316d3be81598573d686cdad226a4c5d3177d720e187fe53` |
 | jsonpath-plus | 10.3.0 | https://github.com/JSONPath-Plus/JSONPath | MIT | `vendor/jsonpath-plus.js` | `85667908eee7ca1835b9cdb10e10add3ce9e3cd21bb377c0e143d02656b8bc7c` |
-| jqts | 0.0.8 | https://github.com/kentdotn/jqts | MIT | `vendor/jqts.js` | `5d85b85f308efc01b7249573012ab8d8d7c06e9d5b82f5f72ed02210b950c9ce` |
+| jq-wasm (jq 1.8.2 compiled to WebAssembly) | 3.0.0-jq-1.8.2 | https://github.com/owenthereal/jq-wasm (jq itself: https://github.com/jqlang/jq, tag jq-1.8.2) | MIT (jq: MIT) | `vendor/jq-wasm.js` | `3b19c02eca055e0c2abdae5a32cb052934bf3bf3715d3c3bb3d47838925e4732` |
 | CodeMirror 6 bundle | see sub-components below | https://codemirror.net | MIT | `vendor/codemirror.js` | `d69baf52717e2feb1515413679de8aa4ba9f6432700c348e6321da89c7db7afa` |
+
+`vendor/jq-wasm.js` is the jq-wasm package's `inline` build (the Emscripten
+JavaScript glue with the `jq.wasm` bytes embedded as a base64 payload — jq
+1.8.2 built from source by the package's own pipeline) wrapped by esbuild
+into an IIFE exposing a `JQWASM` global; the rebuild command is in the file's
+header comment. The WebAssembly module's heap is fixed by that binary at
+256 MB (16 MB initial), which is where the extension's 40 MB jq input
+ceiling comes from. It is the only WebAssembly in the extension and the sole
+reason the manifest CSP includes `'wasm-unsafe-eval'`.
 
 `vendor/codemirror.js` is a single esbuild IIFE bundle of these packages
 (rebuild command is in the file's header comment):

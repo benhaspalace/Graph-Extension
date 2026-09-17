@@ -76,7 +76,10 @@ These invariants are load-bearing for the security model in
 - **No dynamic code.** No `eval`, `new Function`, remote scripts, or
   `innerHTML`/`insertAdjacentHTML`/`document.write`. The panel is built with
   `createElement`/`textContent` only, so Graph response data is never
-  interpreted as markup.
+  interpreted as markup. The one WebAssembly module (`vendor/jq-wasm.js` —
+  jq itself) is a vendored, checksummed binary instantiated from embedded
+  bytes; the manifest's `'wasm-unsafe-eval'` exists for it alone and must
+  not widen.
 - **No new permissions or host access.** `storage` and
   `developer.microsoft.com` are the whole surface.
 - **No credentials, ever.** `Authorization`, `Cookie`, `SdkVersion`, and

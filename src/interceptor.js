@@ -238,10 +238,28 @@
       pages: chain.pages,
       items: chain.totalItems,
       size: chain.totalSize,
+      count: chain.count, // @odata.count from the first page, or null
       state: state,
       reason: reason || null,
       unlimited: chain.unlimited === true
     });
+  }
+
+  /**
+   * The total the first page announced (`@odata.count`, present when the
+   * request asked for `$count=true`) — what the panel's progress bar is
+   * measured against. Numbers and digit strings pass through as-is; the
+   * panel normalizes (GEJQ.fetchPercent). Anything else means "unknown".
+   */
+  function odataCount(json) {
+    var count = json['@odata.count'];
+    if (typeof count === 'number' && isFinite(count) && count >= 0) {
+      return count;
+    }
+    if (typeof count === 'string' && /^\d+$/.test(count)) {
+      return count;
+    }
+    return null;
   }
 
   /** Post the chain's combined dataset (same entry id every time). */
@@ -533,6 +551,7 @@
       pages: 1,
       totalItems: firstJson.value.length,
       totalSize: firstEntry.size || 0,
+      count: odataCount(firstJson),
       nextUrl: firstJson['@odata.nextLink'],
       state: 'running',
       pageBudget: settings.autoFetchMaxPages,
